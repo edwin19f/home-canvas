@@ -12,7 +12,6 @@ import ObjectCard from './components/ObjectCard';
 import Spinner from './components/Spinner';
 import DebugModal from './components/DebugModal';
 import TouchGhost from './components/TouchGhost';
-import InteriorDesigner from './components/InteriorDesigner';
 import PlacementContextMenu from './components/PlacementContextMenu';
 import SurfaceModificationModal from './components/SurfaceModificationModal';
 
@@ -60,7 +59,6 @@ const loadingMessages = [
 
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'productPlacement' | 'interiorDesign'>('productPlacement');
   const [products, setProducts] = useState<Product[]>([]);
   const [productFiles, setProductFiles] = useState<Map<number, File>>(new Map());
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
@@ -879,25 +877,8 @@ const App: React.FC = () => {
             </button>
         </div>
 
-        <div className="w-full max-w-md mx-auto bg-zinc-100 p-1.5 rounded-xl flex justify-center gap-2">
-            <button
-                onClick={() => setActiveTab('productPlacement')}
-                className={`w-full py-2.5 px-4 rounded-lg text-sm md:text-base font-semibold transition-all duration-300 ${activeTab === 'productPlacement' ? 'bg-white shadow' : 'text-zinc-600 hover:bg-white/60'}`}
-                aria-current={activeTab === 'productPlacement'}
-            >
-                Product Placement
-            </button>
-            <button
-                onClick={() => setActiveTab('interiorDesign')}
-                className={`w-full py-2.5 px-4 rounded-lg text-sm md:text-base font-semibold transition-all duration-300 ${activeTab === 'interiorDesign' ? 'bg-white shadow' : 'text-zinc-600 hover:bg-white/60'}`}
-                aria-current={activeTab === 'interiorDesign'}
-            >
-                Interior Design
-            </button>
-        </div>
-
         <main className="w-full">
-          {activeTab === 'productPlacement' ? renderProductPlacementContent() : <InteriorDesigner />}
+          {renderProductPlacementContent()}
         </main>
       </div>
       <DebugModal 
