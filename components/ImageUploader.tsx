@@ -178,7 +178,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       setOrbPosition(null);
       setUrlError(null);
 
-      if (isDropZone && onPlacementRequest) {
+      if (isDropZone && onPlacementRequest && productSilhouetteUrl) {
           // Case 1: A product is being dropped onto the scene
           handlePlacement(event.clientX, event.clientY, event.currentTarget);
       } else {
@@ -194,7 +194,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
               onFileSelect(file);
           }
       }
-  }, [isDropZone, onPlacementRequest, onFileSelect, handlePlacement]);
+  }, [isDropZone, onPlacementRequest, onFileSelect, handlePlacement, productSilhouetteUrl]);
   
   const showHoverState = isDraggingOver || isTouchHovering;
   const currentOrbPosition = orbPosition || touchOrbPosition;
@@ -204,7 +204,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       showHoverState ? 'border-blue-500 bg-blue-50 is-dragging-over'
     : isDropZone ? 'border-zinc-400 cursor-crosshair'
     : 'border-zinc-300'
-  } ${!isActionable ? 'cursor-default' : isDropZone ? '' : 'hover:border-blue-500'}`;
+  } ${!isActionable ? 'cursor-default' : isDropZone ? (productSilhouetteUrl ? 'cursor-crosshair' : 'cursor-context-menu') : 'hover:border-blue-500'}`;
 
   const uploaderContent = (
     <div className="text-center text-zinc-500 p-4 flex flex-col h-full w-full justify-center">
@@ -260,7 +260,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       {label && <h3 className="text-xl font-semibold mb-4 text-zinc-700">{label}</h3>}
       <div
         className={uploaderClasses}
-        onClick={imageUrl && isActionable ? handleClick : undefined}
+        onClick={imageUrl && isActionable && productSilhouetteUrl ? handleClick : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}

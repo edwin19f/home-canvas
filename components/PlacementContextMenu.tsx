@@ -7,18 +7,20 @@ import React from 'react';
 
 interface PlacementContextMenuProps {
   position: { x: number; y: number };
-  onPlaceProduct: () => void;
+  onPlaceOnSurface: () => void;
+  onPlaceAgainstWall: () => void;
   onChangeColor: () => void;
   onChangeTexture: () => void;
-  onOther: () => void;
   onClose: () => void;
+  isProductSelected: boolean;
 }
 
-const MenuItem: React.FC<{ onClick: () => void; children: React.ReactNode }> = ({ onClick, children }) => (
+const MenuItem: React.FC<{ onClick: () => void; disabled?: boolean; children: React.ReactNode }> = ({ onClick, disabled = false, children }) => (
   <li>
     <button
       onClick={onClick}
-      className="w-full text-left px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
+      disabled={disabled}
+      className="w-full text-left px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors disabled:text-zinc-400 disabled:bg-white disabled:cursor-not-allowed"
     >
       {children}
     </button>
@@ -27,11 +29,12 @@ const MenuItem: React.FC<{ onClick: () => void; children: React.ReactNode }> = (
 
 const PlacementContextMenu: React.FC<PlacementContextMenuProps> = ({
   position,
-  onPlaceProduct,
+  onPlaceOnSurface,
+  onPlaceAgainstWall,
   onChangeColor,
   onChangeTexture,
-  onOther,
   onClose,
+  isProductSelected
 }) => {
   const menuStyle: React.CSSProperties = {
     position: 'fixed',
@@ -47,17 +50,17 @@ const PlacementContextMenu: React.FC<PlacementContextMenuProps> = ({
       
       <div
         style={menuStyle}
-        className="bg-white rounded-lg shadow-xl border border-zinc-200 w-48 animate-fade-in"
+        className="bg-white rounded-lg shadow-xl border border-zinc-200 w-56 animate-fade-in"
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside menu
         role="menu"
         aria-orientation="vertical"
         aria-labelledby="menu-button"
       >
-        <ul className="py-1">
-          <MenuItem onClick={onPlaceProduct}>Place Product</MenuItem>
-          <MenuItem onClick={onChangeColor}>Change Color</MenuItem>
-          <MenuItem onClick={onChangeTexture}>Change Texture</MenuItem>
-          <MenuItem onClick={onOther}>Others</MenuItem>
+        <ul className="py-1 divide-y divide-zinc-100">
+          <MenuItem onClick={onPlaceOnSurface} disabled={!isProductSelected}>Place Product Here</MenuItem>
+          <MenuItem onClick={onPlaceAgainstWall} disabled={!isProductSelected}>Place Product Against Nearest Wall</MenuItem>
+          <MenuItem onClick={onChangeColor}>Change Color of this Surface...</MenuItem>
+          <MenuItem onClick={onChangeTexture}>Change Texture of this Surface...</MenuItem>
         </ul>
       </div>
     </>

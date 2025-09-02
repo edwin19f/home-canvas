@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { generateCompositeImage, generateProductSilhouette, generateInteriorDesign } from './services/geminiService';
+import { generateCompositeImage, generateProductSilhouette, generateInteriorDesign, modifySurface } from './services/geminiService';
 import { Product } from './types';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -14,6 +14,7 @@ import DebugModal from './components/DebugModal';
 import TouchGhost from './components/TouchGhost';
 import InteriorDesigner from './components/InteriorDesigner';
 import PlacementContextMenu from './components/PlacementContextMenu';
+import SurfaceModificationModal from './components/SurfaceModificationModal';
 
 // Pre-load a transparent image to use for hiding the default drag ghost.
 // This prevents a race condition on the first drag.
@@ -79,6 +80,11 @@ const App: React.FC = () => {
     containerY: number;
     relativeX: number;
     relativeY: number;
+  } | null>(null);
+
+  const [surfaceModificationState, setSurfaceModificationState] = useState<{
+    type: 'color' | 'texture';
+    position: { xPercent: number; yPercent: number; };
   } | null>(null);
 
   // State for touch drag & drop
@@ -284,7 +290,11 @@ const App: React.FC = () => {
     }
   }, [handleAddProduct]);
 
-  const handleProductDrop = useCallback(async (position: {x: number, y: number}, relativePosition: { xPercent: number; yPercent: number; }) => {
+  const handleProductDrop = useCallback(async (
+    position: {x: number, y: number}, 
+    relativePosition: { xPercent: number; yPercent: number; },
+    placementStyle: 'on_surface' | 'against_wall'
+  ) => {
     const currentActiveProduct = products.find(p => p.id === activeProductId);
     const currentActiveProductFile = activeProductId ? productFiles.get(activeProductId) : null;
 
@@ -302,7 +312,8 @@ const App: React.FC = () => {
         currentActiveProduct.name,
         sceneImage,
         sceneImage.name,
-        relativePosition
+        relativePosition,
+        placementStyle
       );
       setDebugImageUrl(debugImageUrl);
       setDebugPrompt(finalPrompt);
@@ -335,15 +346,28 @@ const App: React.FC = () => {
     setPersistedOrbPosition(null);
   }, []);
 
-  const handlePlaceProductAction = useCallback(() => {
+  const handlePlaceProductAction = useCallback((placementStyle: 'on_surface' | 'against_wall') => {
     if (!placementContextMenu || !activeProduct) return;
     handleProductDrop(
         { x: placementContextMenu.containerX, y: placementContextMenu.containerY },
-        { xPercent: placementContextMenu.relativeX, yPercent: placementContextMenu.relativeY }
+        { xPercent: placementContextMenu.relativeX, yPercent: placementContextMenu.relativeY },
+        placementStyle
     );
     setPlacementContextMenu(null);
   }, [placementContextMenu, activeProduct, handleProductDrop]);
   
+  const handleModifySurfaceRequest = useCallback((type: 'color' | 'texture') => {
+    if (!placementContextMenu) return;
+    setSurfaceModificationState({
+        type: type,
+        position: {
+            xPercent: placementContextMenu.relativeX,
+            yPercent: placementContextMenu.relativeY,
+        },
+    });
+    closeContextMenu();
+  }, [placementContextMenu, closeContextMenu]);
+
   const handlePlacementRequest = useCallback((
       position: { clientX: number, clientY: number, containerX: number, containerY: number },
       relativePosition: { xPercent: number, yPercent: number }
@@ -397,6 +421,45 @@ const App: React.FC = () => {
     }
   }, [sceneImage, sceneDesignPrompt]);
 
+    const handleSurfaceModificationSubmit = useCallback(async (modificationValue: string) => {
+        if (!surfaceModificationState || !sceneImage) return;
+
+        const { type, position } = surfaceModificationState;
+        setSurfaceModificationState(null); // Close the modal
+        
+        const previousScene = sceneImage; // For undo
+        setIsLoading(true);
+        setError(null);
+        setPersistedOrbPosition(null);
+        
+        try {
+            const generatedImageUrl = await modifySurface(
+                sceneImage,
+                position,
+                type,
+                modificationValue
+            );
+            const newSceneFile = dataURLtoFile(generatedImageUrl, `modified-scene-${Date.now()}.jpeg`);
+            setSceneImage(newSceneFile);
+
+            // Add the previous state to history
+            undoHistoryRef.current.push(previousScene);
+            if (undoHistoryRef.current.length > 10) {
+                undoHistoryRef.current.shift();
+            }
+            redoHistoryRef.current = [];
+            setCanUndo(true);
+            setCanRedo(false);
+
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(`Failed to modify the surface. ${errorMessage}`);
+            console.error(err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [surfaceModificationState, sceneImage]);
+
   const handleReset = useCallback(() => {
     setProducts([]);
     setProductFiles(new Map());
@@ -409,6 +472,7 @@ const App: React.FC = () => {
     setDebugPrompt(null);
     setSceneDesignPrompt('');
     setPlacementContextMenu(null);
+    setSurfaceModificationState(null);
     undoHistoryRef.current = [];
     redoHistoryRef.current = [];
     setCanUndo(false);
@@ -447,6 +511,7 @@ const App: React.FC = () => {
     setDebugPrompt(null);
     setSceneDesignPrompt('');
     setPlacementContextMenu(null);
+    setSurfaceModificationState(null);
     // Changing the scene resets the history
     undoHistoryRef.current = [];
     redoHistoryRef.current = [];
@@ -698,7 +763,7 @@ const App: React.FC = () => {
                   id="scene-uploader" 
                   onFileSelect={handleChangeScene} 
                   imageUrl={sceneImageUrl}
-                  isDropZone={!!sceneImage && !isLoading && activeProductId !== null}
+                  isDropZone={!!sceneImage && !isLoading}
                   onPlacementRequest={handlePlacementRequest}
                   persistedOrbPosition={persistedOrbPosition}
                   showDebugButton={!!debugImageUrl && !isLoading}
@@ -712,7 +777,7 @@ const App: React.FC = () => {
                 {sceneImage && !isLoading && (
                     <div className="w-full mx-auto p-4 border border-zinc-200 rounded-lg bg-zinc-50/50 animate-fade-in">
                         <label htmlFor="scene-design-prompt" className="block text-md font-bold text-zinc-800 mb-2 text-left">
-                            Or, Redesign the Scene
+                            Or, Redesign the Entire Scene
                         </label>
                         <textarea
                             id="scene-design-prompt"
@@ -754,7 +819,7 @@ const App: React.FC = () => {
              <p className="text-zinc-500 animate-fade-in">
                 {activeProductId === null 
                     ? "Select a product from the list to begin."
-                    : "Drag or click on the scene to place the selected product."
+                    : "Drag or click on the scene to place the selected product or modify a surface."
                 }
              </p>
            )}
@@ -768,13 +833,20 @@ const App: React.FC = () => {
       {placementContextMenu && (
         <PlacementContextMenu
             position={{ x: placementContextMenu.screenX, y: placementContextMenu.screenY }}
-            onPlaceProduct={handlePlaceProductAction}
-            onChangeColor={() => { console.log('Change Color clicked'); closeContextMenu(); }}
-            onChangeTexture={() => { console.log('Change Texture clicked'); closeContextMenu(); }}
-            onOther={() => { console.log('Other clicked'); closeContextMenu(); }}
+            onPlaceOnSurface={() => handlePlaceProductAction('on_surface')}
+            onPlaceAgainstWall={() => handlePlaceProductAction('against_wall')}
+            onChangeColor={() => handleModifySurfaceRequest('color')}
+            onChangeTexture={() => handleModifySurfaceRequest('texture')}
             onClose={closeContextMenu}
+            isProductSelected={!!activeProduct}
         />
       )}
+      <SurfaceModificationModal
+        isOpen={!!surfaceModificationState}
+        onClose={() => setSurfaceModificationState(null)}
+        onSubmit={handleSurfaceModificationSubmit}
+        type={surfaceModificationState?.type || 'color'}
+      />
       <TouchGhost 
         imageUrl={isTouchDragging ? activeProduct?.imageUrl ?? null : null} 
         position={touchGhostPosition}

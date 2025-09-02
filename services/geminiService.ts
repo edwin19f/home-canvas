@@ -259,6 +259,7 @@ const markImage = async (
  * @param environmentImage The file for the background environment.
  * @param environmentDescription A text description of the environment.
  * @param dropPosition The relative x/y coordinates (0-100) where the product was dropped.
+ * @param placementStyle Defines how the product should be placed.
  * @returns A promise that resolves to an object containing the base64 data URL of the generated image and the debug image.
  */
 export const generateCompositeImage = async (
@@ -266,7 +267,8 @@ export const generateCompositeImage = async (
     objectDescription: string,
     environmentImage: File,
     environmentDescription: string,
-    dropPosition: { xPercent: number; yPercent: number; }
+    dropPosition: { xPercent: number; yPercent: number; },
+    placementStyle: 'on_surface' | 'against_wall'
 ): Promise<{ finalImageUrl: string; debugImageUrl: string; finalPrompt: string; }> => {
   console.log('Starting multi-step image generation process...');
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
@@ -292,33 +294,37 @@ export const generateCompositeImage = async (
 
 
   // STEP 3: Generate semantic location description with Gemini 2.5 Flash Lite using the MARKED image
-  console.log('Generating semantic location description with gemini-2.5-flash-lite...');
+  console.log('Generating semantic location description...');
   
   const markedEnvironmentImagePart = await fileToPart(markedResizedEnvironmentImage);
 
+  const placementInstruction = placementStyle === 'against_wall' 
+    ? "The user wants to place the product on the floor, but pushed up against the nearest wall or vertical surface from the marker."
+    : "The user wants to place the product directly on the surface indicated by the marker.";
+    
   const descriptionPrompt = `
 You are an expert scene analyst. I will provide you with an image that has a red marker on it.
-Your task is to provide a very dense, semantic description of what is at the exact location of the red marker.
+Your task is to provide a very dense, semantic description of the desired placement location based on the marker and the user's intent.
+
+**User Intent:** ${placementInstruction}
+
 Be specific about surfaces, objects, and spatial relationships. This description will be used to guide another AI in placing a new object.
 
-Example semantic descriptions:
+Example semantic descriptions for 'on_surface':
 - "The product location is on the dark grey fabric of the sofa cushion, in the middle section, slightly to the left of the white throw pillow."
-- "The product location is on the light-colored wooden floor, in the patch of sunlight coming from the window, about a foot away from the leg of the brown leather armchair."
-- "The product location is on the white marble countertop, just to the right of the stainless steel sink and behind the green potted plant."
+- "The product location is on the light-colored wooden floor, in the patch of sunlight coming from the window."
 
-On top of the semantic description above, give a rough relative-to-image description.
+Example semantic descriptions for 'against_wall':
+- "The product location is on the wooden floor, positioned flush against the base of the beige wall that is visible behind the marker."
+- "The product location is on the carpet, directly against the white bookshelf unit to the right of the marker."
 
-Example relative-to-image descriptions:
-- "The product location is about 10% away from the bottom-left of the image."
-- "The product location is about 20% away from the right of the image."
-
-Provide only the two descriptions concatenated in a few sentences.
+Provide only the final, detailed description in a few sentences.
 `;
   
   let semanticLocationDescription = '';
   try {
     const descriptionResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite',
+      model: 'gemini-2.5-flash',
       contents: { parts: [{ text: descriptionPrompt }, markedEnvironmentImagePart] }
     });
     semanticLocationDescription = descriptionResponse.text;
@@ -504,4 +510,108 @@ export const generateInteriorDesign = async (
 
     console.error("Design model response did not contain an image part.", response);
     throw new Error("The AI model did not return an image. Please try again.");
+};
+
+
+/**
+ * Modifies a specific surface (e.g., a wall, floor) in a scene image based on a user prompt.
+ * @param sceneImage The original scene image file.
+ * @param position The x/y coordinates of the surface to modify.
+ * @param modificationType The type of change, e.g., 'color' or 'texture'.
+ * @param modificationValue A text description of the desired change.
+ * @returns A promise that resolves to the base64 data URL of the modified scene image.
+ */
+export const modifySurface = async (
+    sceneImage: File,
+    position: { xPercent: number; yPercent: number; },
+    modificationType: 'color' | 'texture',
+    modificationValue: string
+): Promise<string> => {
+    console.log('Starting two-step surface modification process...');
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+    // Get original scene dimensions for resizing and final cropping
+    const { width: originalWidth, height: originalHeight } = await getImageDimensions(sceneImage);
+    const MAX_DIMENSION = 1024;
+    
+    // Prepare base images
+    const resizedSceneImage = await resizeImage(sceneImage, MAX_DIMENSION);
+    const markedSceneImage = await markImage(resizedSceneImage, position, { originalWidth, originalHeight });
+
+    // STEP 1: Analyze the marked image to identify the surface
+    console.log('Step 1: Identifying the surface at the marked location...');
+    const markedImagePart = await fileToPart(markedSceneImage);
+
+    const analysisPrompt = `
+You are an expert scene analyst. Your task is to identify and describe the surface at the exact location of the red marker in the provided image.
+Be concise and descriptive. Your answer will be used to instruct another AI.
+
+Examples:
+- "the back wall"
+- "the hardwood floor"
+- "the left-side gray fabric sofa"
+- "the ceiling"
+- "the white marble countertop"
+
+Provide only the description of the identified surface.
+`;
+
+    let surfaceDescription = '';
+    try {
+        const analysisResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: analysisPrompt }, markedImagePart] }
+        });
+        surfaceDescription = analysisResponse.text.trim();
+        console.log('Identified surface:', surfaceDescription);
+    } catch (error) {
+        console.error('Failed to identify the surface:', error);
+        throw new Error("The AI failed to analyze the selected surface. Please try again.");
+    }
+    
+    // STEP 2: Modify the identified surface on the clean image
+    console.log('Step 2: Generating modification for the identified surface...');
+    const cleanSceneImagePart = await fileToPart(resizedSceneImage);
+
+    const modificationPrompt = `
+**Role:** You are an expert interior designer AI.
+**Task:** Redesign a specific part of the room in the provided image based on the instructions.
+**Crucial Instruction:** You must ONLY change the ${modificationType} of **${surfaceDescription}** to **"${modificationValue}"**.
+
+**Rules:**
+- Preserve the original room's architecture, lighting, shadows, perspective, and all other objects perfectly.
+- The change should be photorealistic and seamlessly integrated.
+- Do not alter any other part of the image.
+
+The output should ONLY be the final, redesigned image. Do not add any text, watermarks, or explanations.
+`;
+    
+    const textPart = { text: modificationPrompt };
+
+    const modificationResponse: GenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image-preview',
+        contents: { parts: [cleanSceneImagePart, textPart] },
+    });
+    
+    console.log('Received response from modification model.');
+
+    const imagePartFromResponse = modificationResponse.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+
+    if (imagePartFromResponse?.inlineData) {
+        const { mimeType, data } = imagePartFromResponse.inlineData;
+        const generatedSquareImageUrl = `data:${mimeType};base64,${data}`;
+        
+        console.log('Cropping modified image to original aspect ratio...');
+        const finalImageUrl = await cropToOriginalAspectRatio(
+            generatedSquareImageUrl,
+            originalWidth,
+            originalHeight,
+            MAX_DIMENSION
+        );
+        
+        return finalImageUrl;
+    }
+
+    console.error("Modification model response did not contain an image part.", modificationResponse);
+    throw new Error("The AI model did not return a modified image. Please try again.");
 };
