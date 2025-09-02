@@ -12,6 +12,7 @@ import ObjectCard from './components/ObjectCard';
 import Spinner from './components/Spinner';
 import DebugModal from './components/DebugModal';
 import TouchGhost from './components/TouchGhost';
+import InteriorDesigner from './components/InteriorDesigner';
 
 // Pre-load a transparent image to use for hiding the default drag ghost.
 // This prevents a race condition on the first drag.
@@ -46,6 +47,7 @@ const loadingMessages = [
 
 
 const App: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'productPlacement' | 'interiorDesign'>('productPlacement');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productImageFile, setProductImageFile] = useState<File | null>(null);
   const [sceneImage, setSceneImage] = useState<File | null>(null);
@@ -297,7 +299,7 @@ const App: React.FC = () => {
     };
   }, [isTouchDragging, handleProductDrop]);
 
-  const renderContent = () => {
+  const renderProductPlacementContent = () => {
     if (error) {
        return (
            <div className="text-center animate-fade-in bg-red-50 border border-red-200 p-8 rounded-lg max-w-2xl mx-auto">
@@ -439,8 +441,26 @@ const App: React.FC = () => {
       />
       <div className="flex flex-col items-center gap-8 w-full">
         <Header />
+        
+        <div className="w-full max-w-md mx-auto bg-zinc-100 p-1.5 rounded-xl flex justify-center gap-2">
+            <button
+                onClick={() => setActiveTab('productPlacement')}
+                className={`w-full py-2.5 px-4 rounded-lg text-sm md:text-base font-semibold transition-all duration-300 ${activeTab === 'productPlacement' ? 'bg-white shadow' : 'text-zinc-600 hover:bg-white/60'}`}
+                aria-current={activeTab === 'productPlacement'}
+            >
+                Product Placement
+            </button>
+            <button
+                onClick={() => setActiveTab('interiorDesign')}
+                className={`w-full py-2.5 px-4 rounded-lg text-sm md:text-base font-semibold transition-all duration-300 ${activeTab === 'interiorDesign' ? 'bg-white shadow' : 'text-zinc-600 hover:bg-white/60'}`}
+                aria-current={activeTab === 'interiorDesign'}
+            >
+                Interior Design
+            </button>
+        </div>
+
         <main className="w-full">
-          {renderContent()}
+          {activeTab === 'productPlacement' ? renderProductPlacementContent() : <InteriorDesigner />}
         </main>
       </div>
       <DebugModal 

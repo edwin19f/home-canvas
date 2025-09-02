@@ -388,3 +388,74 @@ The output should ONLY be the final, composed image. Do not add any text or expl
   console.error("Model response did not contain an image part.", response);
   throw new Error("The AI model did not return an image. Please try again.");
 };
+
+/**
+ * Generates a new interior design for a room based on an image and a text prompt.
+ * @param roomImage The file for the room to be redesigned.
+ * @param designPrompt A text description of the desired changes.
+ * @returns A promise that resolves to the base64 data URL of the generated design image.
+ */
+export const generateInteriorDesign = async (
+    roomImage: File,
+    designPrompt: string,
+): Promise<string> => {
+    console.log('Starting interior design generation process...');
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+    // Get original scene dimensions for final cropping
+    const { width: originalWidth, height: originalHeight } = await getImageDimensions(roomImage);
+
+    // Define standard dimension for model inputs
+    const MAX_DIMENSION = 1024;
+
+    // STEP 1: Prepare image by resizing
+    console.log('Resizing room image...');
+    const resizedRoomImage = await resizeImage(roomImage, MAX_DIMENSION);
+
+    // STEP 2: Prepare parts for the multimodal prompt
+    const roomImagePart = await fileToPart(resizedRoomImage);
+    
+    const prompt = `
+**Role:** You are an expert interior designer AI.
+**Task:** Redesign the room in the provided image based on the user's request. Preserve the original room's architecture (like windows, doors, and layout) unless specifically instructed to alter them.
+
+**User's Design Request:**
+"${designPrompt}"
+
+**Instructions:**
+- The final image must be a photorealistic rendering of the redesigned space.
+- Ensure that the lighting, shadows, and perspective of any new or modified elements are perfectly consistent with the original image's ambiance.
+- The output should ONLY be the final, redesigned image. Do not add any text, watermarks, or explanations.
+`;
+    const textPart = { text: prompt };
+
+    // STEP 3: Generate the new design
+    console.log('Sending image and prompt to the design model...');
+    const response: GenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image-preview',
+        contents: { parts: [roomImagePart, textPart] },
+    });
+    
+    console.log('Received response from design model.');
+
+    const imagePartFromResponse = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+
+    if (imagePartFromResponse?.inlineData) {
+        const { mimeType, data } = imagePartFromResponse.inlineData;
+        console.log(`Received image data (${mimeType})`);
+        const generatedSquareImageUrl = `data:${mimeType};base64,${data}`;
+        
+        console.log('Cropping generated design to original aspect ratio...');
+        const finalImageUrl = await cropToOriginalAspectRatio(
+            generatedSquareImageUrl,
+            originalWidth,
+            originalHeight,
+            MAX_DIMENSION
+        );
+        
+        return finalImageUrl;
+    }
+
+    console.error("Design model response did not contain an image part.", response);
+    throw new Error("The AI model did not return an image. Please try again.");
+};
