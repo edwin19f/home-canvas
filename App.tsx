@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { generateCompositeImage, generateProductSilhouette } from './services/geminiService';
+import { generateCompositeImage, generateProductSilhouette, generateInteriorDesign } from './services/geminiService';
 import { Product } from './types';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -70,6 +70,7 @@ const App: React.FC = () => {
   const [debugImageUrl, setDebugImageUrl] = useState<string | null>(null);
   const [debugPrompt, setDebugPrompt] = useState<string | null>(null);
   const [isDebugModalOpen, setIsDebugModalOpen] = useState(false);
+  const [sceneDesignPrompt, setSceneDesignPrompt] = useState('');
 
   // State for touch drag & drop
   const [isTouchDragging, setIsTouchDragging] = useState<boolean>(false);
@@ -301,6 +302,39 @@ const App: React.FC = () => {
   }, [productFiles, sceneImage, products, activeProductId]);
 
 
+  const handleSceneDesignGeneration = useCallback(async () => {
+    if (!sceneImage || !sceneDesignPrompt.trim()) {
+        setError('Please provide a scene image and a design instruction.');
+        return;
+    }
+
+    const previousScene = sceneImage; // For undo
+    setIsLoading(true);
+    setError(null);
+    setPersistedOrbPosition(null); // Clear any placement markers
+
+    try {
+        const generatedImageUrl = await generateInteriorDesign(sceneImage, sceneDesignPrompt);
+        const newSceneFile = dataURLtoFile(generatedImageUrl, `redesigned-scene-${Date.now()}.jpeg`);
+        setSceneImage(newSceneFile);
+
+        // Add the previous state to history for the undo action
+        historyRef.current.push(previousScene);
+        if (historyRef.current.length > 10) { // Limit history size
+            historyRef.current.shift();
+        }
+        setCanUndo(true);
+        setSceneDesignPrompt(''); // Clear prompt on success
+
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setError(`Failed to generate the design. ${errorMessage}`);
+        console.error(err);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [sceneImage, sceneDesignPrompt]);
+
   const handleReset = useCallback(() => {
     setProducts([]);
     setProductFiles(new Map());
@@ -311,6 +345,7 @@ const App: React.FC = () => {
     setPersistedOrbPosition(null);
     setDebugImageUrl(null);
     setDebugPrompt(null);
+    setSceneDesignPrompt('');
     historyRef.current = [];
     setCanUndo(false);
     localStorage.removeItem('homeCanvasState');
@@ -331,6 +366,7 @@ const App: React.FC = () => {
     setPersistedOrbPosition(null);
     setDebugImageUrl(null);
     setDebugPrompt(null);
+    setSceneDesignPrompt('');
     // Changing the scene resets the history
     historyRef.current = [];
     setCanUndo(false);
@@ -531,9 +567,9 @@ const App: React.FC = () => {
 
     return (
       <div className="w-full max-w-7xl mx-auto animate-fade-in">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-stretch">
           {/* Product Column */}
-          <div className="md:col-span-1 flex flex-col">
+          <div className="lg:col-span-1 flex flex-col">
             <h2 className="text-2xl font-extrabold text-center mb-5 text-zinc-800">Products</h2>
             <div className="flex-grow overflow-y-auto space-y-4 p-2 border border-zinc-200 rounded-lg bg-zinc-50/50 min-h-[40vh] md:min-h-0">
                 {products.map(product => (
@@ -569,7 +605,7 @@ const App: React.FC = () => {
             </div>
           </div>
           {/* Scene Column */}
-          <div className="md:col-span-2 flex flex-col">
+          <div className="lg:col-span-3 flex flex-col">
             <h2 className="text-2xl font-extrabold text-center mb-5 text-zinc-800">Scene</h2>
             <div className="flex-grow flex items-center justify-center">
               <ImageUploader 
@@ -587,17 +623,39 @@ const App: React.FC = () => {
                   productSilhouetteUrl={activeProduct?.silhouetteUrl}
               />
             </div>
-            <div className="text-center mt-4">
-              <div className="h-5 flex items-center justify-center">
+            <div className="mt-4">
                 {sceneImage && !isLoading && (
-                  <button
-                      onClick={handleChangeScene}
-                      className="text-sm text-blue-600 hover:text-blue-800 font-semibold"
-                  >
-                      Change Scene
-                  </button>
+                    <div className="w-full mx-auto p-4 border border-zinc-200 rounded-lg bg-zinc-50/50 animate-fade-in">
+                        <label htmlFor="scene-design-prompt" className="block text-md font-bold text-zinc-800 mb-2 text-left">
+                            Or, Redesign the Scene
+                        </label>
+                        <textarea
+                            id="scene-design-prompt"
+                            rows={3}
+                            className="w-full p-2 border border-zinc-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                            placeholder="e.g., Make this room minimalist with a beige sofa."
+                            value={sceneDesignPrompt}
+                            onChange={(e) => setSceneDesignPrompt(e.target.value)}
+                            disabled={isLoading}
+                        />
+                        <div className="flex flex-col sm:flex-row gap-3 mt-3">
+                            <button
+                                onClick={handleSceneDesignGeneration}
+                                disabled={isLoading || !sceneDesignPrompt.trim()}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:bg-zinc-400 disabled:cursor-not-allowed"
+                            >
+                                Generate Redesign
+                            </button>
+                            <button
+                                onClick={handleChangeScene}
+                                disabled={isLoading}
+                                className="flex-1 sm:flex-none bg-white hover:bg-zinc-100 text-zinc-800 font-semibold py-2 px-4 rounded-lg transition-colors border border-zinc-200"
+                            >
+                                Change Scene
+                            </button>
+                        </div>
+                    </div>
                 )}
-              </div>
             </div>
           </div>
         </div>
@@ -611,7 +669,7 @@ const App: React.FC = () => {
              <p className="text-zinc-500 animate-fade-in">
                 {activeProductId === null 
                     ? "Select a product from the list to place it on the scene."
-                    : "Drag the selected product onto the scene, or click to place it."
+                    : "Drag the selected product onto the scene to place it, or use the prompt below to redesign the entire scene."
                 }
              </p>
            )}
