@@ -13,6 +13,7 @@ import Spinner from './components/Spinner';
 import DebugModal from './components/DebugModal';
 import TouchGhost from './components/TouchGhost';
 import InteriorDesigner from './components/InteriorDesigner';
+import PlacementContextMenu from './components/PlacementContextMenu';
 
 // Pre-load a transparent image to use for hiding the default drag ghost.
 // This prevents a race condition on the first drag.
@@ -71,6 +72,14 @@ const App: React.FC = () => {
   const [debugPrompt, setDebugPrompt] = useState<string | null>(null);
   const [isDebugModalOpen, setIsDebugModalOpen] = useState(false);
   const [sceneDesignPrompt, setSceneDesignPrompt] = useState('');
+  const [placementContextMenu, setPlacementContextMenu] = useState<{
+    screenX: number;
+    screenY: number;
+    containerX: number;
+    containerY: number;
+    relativeX: number;
+    relativeY: number;
+  } | null>(null);
 
   // State for touch drag & drop
   const [isTouchDragging, setIsTouchDragging] = useState<boolean>(false);
@@ -301,6 +310,36 @@ const App: React.FC = () => {
     }
   }, [productFiles, sceneImage, products, activeProductId]);
 
+  const closeContextMenu = useCallback(() => {
+    setPlacementContextMenu(null);
+    setPersistedOrbPosition(null);
+  }, []);
+
+  const handlePlaceProductAction = useCallback(() => {
+    if (!placementContextMenu || !activeProduct) return;
+    handleProductDrop(
+        { x: placementContextMenu.containerX, y: placementContextMenu.containerY },
+        { xPercent: placementContextMenu.relativeX, yPercent: placementContextMenu.relativeY }
+    );
+    setPlacementContextMenu(null);
+  }, [placementContextMenu, activeProduct, handleProductDrop]);
+  
+  const handlePlacementRequest = useCallback((
+      position: { clientX: number, clientY: number, containerX: number, containerY: number },
+      relativePosition: { xPercent: number, yPercent: number }
+  ) => {
+      if (isLoading) return; // Don't show menu if busy
+      setPlacementContextMenu({
+          screenX: position.clientX,
+          screenY: position.clientY,
+          containerX: position.containerX,
+          containerY: position.containerY,
+          relativeX: relativePosition.xPercent,
+          relativeY: relativePosition.yPercent,
+      });
+      // Show a visual marker where the click happened
+      setPersistedOrbPosition({ x: position.containerX, y: position.containerY });
+  }, [isLoading]);
 
   const handleSceneDesignGeneration = useCallback(async () => {
     if (!sceneImage || !sceneDesignPrompt.trim()) {
@@ -346,6 +385,7 @@ const App: React.FC = () => {
     setDebugImageUrl(null);
     setDebugPrompt(null);
     setSceneDesignPrompt('');
+    setPlacementContextMenu(null);
     historyRef.current = [];
     setCanUndo(false);
     localStorage.removeItem('homeCanvasState');
@@ -367,6 +407,7 @@ const App: React.FC = () => {
     setDebugImageUrl(null);
     setDebugPrompt(null);
     setSceneDesignPrompt('');
+    setPlacementContextMenu(null);
     // Changing the scene resets the history
     historyRef.current = [];
     setCanUndo(false);
@@ -404,7 +445,7 @@ const App: React.FC = () => {
   }, [isLoading]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (!activeProduct) return;
+    if (!activeProduct || placementContextMenu) return;
     // Prevent page scroll
     e.preventDefault();
     setIsTouchDragging(true);
@@ -413,7 +454,7 @@ const App: React.FC = () => {
   };
   
   const handleDragStart = (e: React.DragEvent) => {
-      if (!activeProduct) return;
+      if (!activeProduct || placementContextMenu) return;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
   }
@@ -486,7 +527,10 @@ const App: React.FC = () => {
             const xPercent = (imageX / renderedWidth) * 100;
             const yPercent = (imageY / renderedHeight) * 100;
             
-            handleProductDrop({ x: dropX, y: dropY }, { xPercent, yPercent });
+            handlePlacementRequest(
+              { clientX: touch.clientX, clientY: touch.clientY, containerX: dropX, containerY: dropY },
+              { xPercent, yPercent }
+            );
           }
       }
 
@@ -507,7 +551,7 @@ const App: React.FC = () => {
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [isTouchDragging, handleProductDrop]);
+  }, [isTouchDragging, handlePlacementRequest]);
 
   const renderProductPlacementContent = () => {
     if (error) {
@@ -575,7 +619,7 @@ const App: React.FC = () => {
                 {products.map(product => (
                     <div 
                         key={product.id}
-                        draggable={product.id === activeProductId}
+                        draggable={product.id === activeProductId && !placementContextMenu}
                         onDragStart={handleDragStart}
                         onTouchStart={handleTouchStart}
                         className={product.id === activeProductId ? 'cursor-move' : ''}
@@ -614,7 +658,7 @@ const App: React.FC = () => {
                   onFileSelect={handleChangeScene} 
                   imageUrl={sceneImageUrl}
                   isDropZone={!!sceneImage && !isLoading && activeProductId !== null}
-                  onProductDrop={handleProductDrop}
+                  onPlacementRequest={handlePlacementRequest}
                   persistedOrbPosition={persistedOrbPosition}
                   showDebugButton={!!debugImageUrl && !isLoading}
                   onDebugClick={() => setIsDebugModalOpen(true)}
@@ -632,7 +676,7 @@ const App: React.FC = () => {
                         <textarea
                             id="scene-design-prompt"
                             rows={3}
-                            className="w-full p-2 border border-zinc-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                            className="w-full p-2 bg-white border border-zinc-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
                             placeholder="e.g., Make this room minimalist with a beige sofa."
                             value={sceneDesignPrompt}
                             onChange={(e) => setSceneDesignPrompt(e.target.value)}
@@ -668,8 +712,8 @@ const App: React.FC = () => {
            ) : (
              <p className="text-zinc-500 animate-fade-in">
                 {activeProductId === null 
-                    ? "Select a product from the list to place it on the scene."
-                    : "Drag the selected product onto the scene to place it, or use the prompt below to redesign the entire scene."
+                    ? "Select a product from the list to begin."
+                    : "Drag or click on the scene to place the selected product."
                 }
              </p>
            )}
@@ -680,6 +724,16 @@ const App: React.FC = () => {
   
   return (
     <div className="min-h-screen bg-white text-zinc-800 flex items-center justify-center p-4 md:p-8">
+      {placementContextMenu && (
+        <PlacementContextMenu
+            position={{ x: placementContextMenu.screenX, y: placementContextMenu.screenY }}
+            onPlaceProduct={handlePlaceProductAction}
+            onChangeColor={() => { console.log('Change Color clicked'); closeContextMenu(); }}
+            onChangeTexture={() => { console.log('Change Texture clicked'); closeContextMenu(); }}
+            onOther={() => { console.log('Other clicked'); closeContextMenu(); }}
+            onClose={closeContextMenu}
+        />
+      )}
       <TouchGhost 
         imageUrl={isTouchDragging ? activeProduct?.imageUrl ?? null : null} 
         position={touchGhostPosition}

@@ -93,7 +93,7 @@ const InteriorDesigner: React.FC = () => {
             <textarea
               id="design-prompt"
               rows={4}
-              className="w-full p-3 border-2 border-zinc-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+              className="w-full p-3 bg-white border-2 border-zinc-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
               placeholder="e.g., Make the walls sage green and add a mid-century modern armchair."
               value={designPrompt}
               onChange={(e) => setDesignPrompt(e.target.value)}

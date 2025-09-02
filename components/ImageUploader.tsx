@@ -11,7 +11,7 @@ interface ImageUploaderProps {
   onFileSelect: (file: File) => void;
   imageUrl: string | null;
   isDropZone?: boolean;
-  onProductDrop?: (position: {x: number, y: number}, relativePosition: { xPercent: number; yPercent: number; }) => void;
+  onPlacementRequest?: (position: { clientX: number, clientY: number, containerX: number, containerY: number }, relativePosition: { xPercent: number; yPercent: number; }) => void;
   persistedOrbPosition?: { x: number; y: number } | null;
   showDebugButton?: boolean;
   onDebugClick?: () => void;
@@ -33,7 +33,7 @@ const WarningIcon: React.FC = () => (
 );
 
 
-const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, label, onFileSelect, imageUrl, isDropZone = false, onProductDrop, persistedOrbPosition, showDebugButton, onDebugClick, isTouchHovering = false, touchOrbPosition = null, productSilhouetteUrl }, ref) => {
+const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, label, onFileSelect, imageUrl, isDropZone = false, onPlacementRequest, persistedOrbPosition, showDebugButton, onDebugClick, isTouchHovering = false, touchOrbPosition = null, productSilhouetteUrl }, ref) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -104,7 +104,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
   // A shared handler for both click and drop placements.
   const handlePlacement = useCallback((clientX: number, clientY: number, currentTarget: HTMLDivElement) => {
     const img = imgRef.current;
-    if (!img || !onProductDrop) return;
+    if (!img || !onPlacementRequest) return;
 
     const containerRect = currentTarget.getBoundingClientRect();
     const { naturalWidth, naturalHeight } = img;
@@ -141,11 +141,14 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
     const xPercent = (imageX / renderedWidth) * 100;
     const yPercent = (imageY / renderedHeight) * 100;
 
-    onProductDrop({ x: pointX, y: pointY }, { xPercent, yPercent });
-  }, [onProductDrop]);
+    onPlacementRequest(
+      { clientX, clientY, containerX: pointX, containerY: pointY },
+      { xPercent, yPercent }
+    );
+  }, [onPlacementRequest]);
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (isDropZone && onProductDrop) {
+    if (isDropZone && onPlacementRequest) {
       // If it's a drop zone, a click should place the product.
       handlePlacement(event.clientX, event.clientY, event.currentTarget);
     }
@@ -154,14 +157,14 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
   const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       setIsDraggingOver(true);
-      if (isDropZone && onProductDrop) {
+      if (isDropZone && onPlacementRequest) {
           const rect = event.currentTarget.getBoundingClientRect();
           setOrbPosition({
               x: event.clientX - rect.left,
               y: event.clientY - rect.top
           });
       }
-  }, [isDropZone, onProductDrop]);
+  }, [isDropZone, onPlacementRequest]);
 
   const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -175,7 +178,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       setOrbPosition(null);
       setUrlError(null);
 
-      if (isDropZone && onProductDrop) {
+      if (isDropZone && onPlacementRequest) {
           // Case 1: A product is being dropped onto the scene
           handlePlacement(event.clientX, event.clientY, event.currentTarget);
       } else {
@@ -191,7 +194,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
               onFileSelect(file);
           }
       }
-  }, [isDropZone, onProductDrop, onFileSelect, handlePlacement]);
+  }, [isDropZone, onPlacementRequest, onFileSelect, handlePlacement]);
   
   const showHoverState = isDraggingOver || isTouchHovering;
   const currentOrbPosition = orbPosition || touchOrbPosition;
