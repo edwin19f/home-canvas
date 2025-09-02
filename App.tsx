@@ -89,9 +89,11 @@ const App: React.FC = () => {
   const sceneImgRef = useRef<HTMLImageElement>(null);
   const addProductInputRef = useRef<HTMLInputElement>(null);
   
-  // State for undo feature
+  // State for undo/redo feature
   const [canUndo, setCanUndo] = useState<boolean>(false);
-  const historyRef = useRef<File[]>([]);
+  const [canRedo, setCanRedo] = useState<boolean>(false);
+  const undoHistoryRef = useRef<File[]>([]);
+  const redoHistoryRef = useRef<File[]>([]);
   const isInitialLoad = useRef(true); // Flag to prevent saving on first load
   
   const sceneImageUrl = sceneImage ? URL.createObjectURL(sceneImage) : null;
@@ -137,7 +139,7 @@ const App: React.FC = () => {
     if (savedStateJSON) {
         try {
             const savedState = JSON.parse(savedStateJSON);
-            const { products: savedProducts, scene, history, activeProductId: savedActiveId } = savedState;
+            const { products: savedProducts, scene, undoHistory, redoHistory, activeProductId: savedActiveId } = savedState;
 
             if (savedProducts && Array.isArray(savedProducts)) {
                 const loadedProducts: Product[] = [];
@@ -161,10 +163,15 @@ const App: React.FC = () => {
                 const sceneFile = dataURLtoFile(scene.dataUrl, scene.name);
                 setSceneImage(sceneFile);
             }
-            if (history && Array.isArray(history) && history.length > 0) {
-                const historyFiles = history.map((item: any) => dataURLtoFile(item.dataUrl, item.name));
-                historyRef.current = historyFiles;
+            if (undoHistory && Array.isArray(undoHistory) && undoHistory.length > 0) {
+                const historyFiles = undoHistory.map((item: any) => dataURLtoFile(item.dataUrl, item.name));
+                undoHistoryRef.current = historyFiles;
                 setCanUndo(true);
+            }
+            if (redoHistory && Array.isArray(redoHistory) && redoHistory.length > 0) {
+                const historyFiles = redoHistory.map((item: any) => dataURLtoFile(item.dataUrl, item.name));
+                redoHistoryRef.current = historyFiles;
+                setCanRedo(true);
             }
         } catch (e) {
             console.error("Failed to load saved state:", e);
@@ -201,8 +208,15 @@ const App: React.FC = () => {
                 name: sceneImage.name,
             } : null;
 
-            const history = await Promise.all(
-                historyRef.current.map(async (file) => ({
+            const undoHistory = await Promise.all(
+                undoHistoryRef.current.map(async (file) => ({
+                    dataUrl: await fileToDataURL(file),
+                    name: file.name,
+                }))
+            );
+            
+            const redoHistory = await Promise.all(
+                redoHistoryRef.current.map(async (file) => ({
                     dataUrl: await fileToDataURL(file),
                     name: file.name,
                 }))
@@ -211,7 +225,8 @@ const App: React.FC = () => {
             const stateToSave = { 
               products: productData.filter(Boolean), 
               scene, 
-              history,
+              undoHistory,
+              redoHistory,
               activeProductId 
             };
             localStorage.setItem('homeCanvasState', JSON.stringify(stateToSave));
@@ -225,7 +240,7 @@ const App: React.FC = () => {
     const timer = setTimeout(saveState, 500);
     return () => clearTimeout(timer);
 
-  }, [products, productFiles, sceneImage, activeProductId, isLoading, canUndo]);
+  }, [products, productFiles, sceneImage, activeProductId, isLoading, canUndo, canRedo]);
 
 
   const handleInstantStart = useCallback(async () => {
@@ -251,8 +266,10 @@ const App: React.FC = () => {
       const sceneFile = new File([sceneBlob], 'scene.jpeg', { type: 'image/jpeg' });
       
       // Clear history and products for a fresh start
-      historyRef.current = [];
+      undoHistoryRef.current = [];
+      redoHistoryRef.current = [];
       setCanUndo(false);
+      setCanRedo(false);
       setProducts([]);
       setProductFiles(new Map());
       setActiveProductId(null);
@@ -293,11 +310,14 @@ const App: React.FC = () => {
       setSceneImage(newSceneFile);
 
       // Add the previous state to history for the undo action
-      historyRef.current.push(previousScene);
-      if (historyRef.current.length > 10) { // Limit history size
-        historyRef.current.shift();
+      undoHistoryRef.current.push(previousScene);
+      if (undoHistoryRef.current.length > 10) { // Limit history size
+        undoHistoryRef.current.shift();
       }
+      // Any new action clears the redo history
+      redoHistoryRef.current = [];
       setCanUndo(true);
+      setCanRedo(false);
 
     } catch (err)
  {
@@ -358,11 +378,14 @@ const App: React.FC = () => {
         setSceneImage(newSceneFile);
 
         // Add the previous state to history for the undo action
-        historyRef.current.push(previousScene);
-        if (historyRef.current.length > 10) { // Limit history size
-            historyRef.current.shift();
+        undoHistoryRef.current.push(previousScene);
+        if (undoHistoryRef.current.length > 10) { // Limit history size
+            undoHistoryRef.current.shift();
         }
+        // Any new action clears the redo history
+        redoHistoryRef.current = [];
         setCanUndo(true);
+        setCanRedo(false);
         setSceneDesignPrompt(''); // Clear prompt on success
 
     } catch (err) {
@@ -386,20 +409,36 @@ const App: React.FC = () => {
     setDebugPrompt(null);
     setSceneDesignPrompt('');
     setPlacementContextMenu(null);
-    historyRef.current = [];
+    undoHistoryRef.current = [];
+    redoHistoryRef.current = [];
     setCanUndo(false);
+    setCanRedo(false);
     localStorage.removeItem('homeCanvasState');
   }, []);
   
   const handleUndo = useCallback(() => {
-    if (historyRef.current.length === 0) return;
+    if (undoHistoryRef.current.length === 0 || !sceneImage) return;
 
-    const previousScene = historyRef.current.pop();
+    const previousScene = undoHistoryRef.current.pop();
     if (previousScene) {
+        redoHistoryRef.current.push(sceneImage);
         setSceneImage(previousScene);
     }
-    setCanUndo(historyRef.current.length > 0);
-  }, []);
+    setCanUndo(undoHistoryRef.current.length > 0);
+    setCanRedo(true);
+  }, [sceneImage]);
+
+  const handleRedo = useCallback(() => {
+      if (redoHistoryRef.current.length === 0 || !sceneImage) return;
+
+      const nextScene = redoHistoryRef.current.pop();
+      if (nextScene) {
+          undoHistoryRef.current.push(sceneImage);
+          setSceneImage(nextScene);
+      }
+      setCanRedo(redoHistoryRef.current.length > 0);
+      setCanUndo(true);
+  }, [sceneImage]);
   
   const handleChangeScene = useCallback(() => {
     setSceneImage(null);
@@ -409,8 +448,10 @@ const App: React.FC = () => {
     setSceneDesignPrompt('');
     setPlacementContextMenu(null);
     // Changing the scene resets the history
-    historyRef.current = [];
+    undoHistoryRef.current = [];
+    redoHistoryRef.current = [];
     setCanUndo(false);
+    setCanRedo(false);
   }, []);
 
   useEffect(() => {
@@ -749,6 +790,13 @@ const App: React.FC = () => {
                 className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
             >
                 Undo
+            </button>
+            <button
+                onClick={handleRedo}
+                disabled={!canRedo || isLoading}
+                className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+            >
+                Redo
             </button>
             <button
                 onClick={handleReset}
