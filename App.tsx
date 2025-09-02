@@ -36,6 +36,17 @@ const dataURLtoFile = (dataurl: string, filename: string): File => {
     return new File([u8arr], filename, {type:mime});
 }
 
+// Helper to convert a File object to a base64 data URL
+const fileToDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+    });
+};
+
+
 const loadingMessages = [
     "Analyzing your product...",
     "Surveying the scene...",
@@ -66,8 +77,18 @@ const App: React.FC = () => {
   const [touchOrbPosition, setTouchOrbPosition] = useState<{x: number, y: number} | null>(null);
   const sceneImgRef = useRef<HTMLImageElement>(null);
   
+  // State for save/load feature
+  const [savedDesignExists, setSavedDesignExists] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  
   const sceneImageUrl = sceneImage ? URL.createObjectURL(sceneImage) : null;
   const productImageUrl = selectedProduct ? selectedProduct.imageUrl : null;
+
+  useEffect(() => {
+    if (localStorage.getItem('homeCanvasDesign')) {
+        setSavedDesignExists(true);
+    }
+  }, []);
 
   const handleProductImageUpload = useCallback((file: File) => {
     // useEffect will handle cleaning up the previous blob URL
@@ -163,7 +184,75 @@ const App: React.FC = () => {
     setPersistedOrbPosition(null);
     setDebugImageUrl(null);
     setDebugPrompt(null);
+    localStorage.removeItem('homeCanvasDesign');
+    setSavedDesignExists(false);
   }, []);
+
+  const handleSaveDesign = async () => {
+    if (!productImageFile || !sceneImage) {
+        setError('A product and scene must be present to save.');
+        return;
+    }
+    setSaveStatus('saving');
+    try {
+        const productDataUrl = await fileToDataURL(productImageFile);
+        const sceneDataUrl = await fileToDataURL(sceneImage);
+
+        const design = {
+            product: {
+                dataUrl: productDataUrl,
+                name: productImageFile.name,
+            },
+            scene: {
+                dataUrl: sceneDataUrl,
+                name: sceneImage.name,
+            },
+        };
+
+        localStorage.setItem('homeCanvasDesign', JSON.stringify(design));
+        setSavedDesignExists(true);
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000); // Reset status after 2 seconds
+    } catch (error) {
+        console.error('Failed to save design:', error);
+        setError('Failed to save the design.');
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+    }
+  };
+
+  const handleLoadDesign = () => {
+    const savedDesignJSON = localStorage.getItem('homeCanvasDesign');
+    if (savedDesignJSON) {
+        try {
+            const savedDesign = JSON.parse(savedDesignJSON);
+            const { product, scene } = savedDesign;
+            
+            // Reset any intermediate state
+            setError(null);
+            setIsLoading(false);
+            setPersistedOrbPosition(null);
+            setDebugImageUrl(null);
+            setDebugPrompt(null);
+
+            // Restore product
+            const newProductFile = dataURLtoFile(product.dataUrl, product.name);
+            handleProductImageUpload(newProductFile);
+
+            // Restore scene
+            const newSceneFile = dataURLtoFile(scene.dataUrl, scene.name);
+            setSceneImage(newSceneFile);
+
+        } catch (error) {
+            console.error('Failed to load design:', error);
+            setError('Could not load the saved design. It might be corrupted.');
+            localStorage.removeItem('homeCanvasDesign');
+            setSavedDesignExists(false);
+        }
+    } else {
+        setError('No saved design found.');
+    }
+  };
 
   const handleChangeProduct = useCallback(() => {
     // Let useEffect handle URL revocation
@@ -309,7 +398,7 @@ const App: React.FC = () => {
                 onClick={handleReset}
                 className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors"
               >
-                Try Again
+                Start Over
             </button>
           </div>
         );
@@ -442,6 +531,31 @@ const App: React.FC = () => {
       <div className="flex flex-col items-center gap-8 w-full">
         <Header />
         
+        {/* Action Controls */}
+        <div className="w-full max-w-lg mx-auto flex items-center justify-center gap-3 p-2 bg-zinc-100 rounded-xl">
+            <button
+                onClick={handleSaveDesign}
+                disabled={!productImageFile || !sceneImage || isLoading || saveStatus === 'saving'}
+                className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+            >
+                {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? 'Save Failed' : 'Save Design'}
+            </button>
+            <button
+                onClick={handleLoadDesign}
+                disabled={!savedDesignExists || isLoading}
+                className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+            >
+                Load Design
+            </button>
+            <button
+                onClick={handleReset}
+                disabled={isLoading}
+                className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:cursor-not-allowed"
+            >
+                Start Over
+            </button>
+        </div>
+
         <div className="w-full max-w-md mx-auto bg-zinc-100 p-1.5 rounded-xl flex justify-center gap-2">
             <button
                 onClick={() => setActiveTab('productPlacement')}
