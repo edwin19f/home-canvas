@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { generateCompositeImage } from './services/geminiService';
+import { generateCompositeImage, generateProductSilhouette } from './services/geminiService';
 import { Product } from './types';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -59,8 +59,9 @@ const loadingMessages = [
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'productPlacement' | 'interiorDesign'>('productPlacement');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [productImageFile, setProductImageFile] = useState<File | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productFiles, setProductFiles] = useState<Map<number, File>>(new Map());
+  const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [sceneImage, setSceneImage] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,38 +77,146 @@ const App: React.FC = () => {
   const [isHoveringDropZone, setIsHoveringDropZone] = useState<boolean>(false);
   const [touchOrbPosition, setTouchOrbPosition] = useState<{x: number, y: number} | null>(null);
   const sceneImgRef = useRef<HTMLImageElement>(null);
+  const addProductInputRef = useRef<HTMLInputElement>(null);
   
-  // State for save/load feature
-  const [savedDesignExists, setSavedDesignExists] = useState<boolean>(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // State for undo feature
+  const [canUndo, setCanUndo] = useState<boolean>(false);
+  const historyRef = useRef<File[]>([]);
+  const isInitialLoad = useRef(true); // Flag to prevent saving on first load
   
   const sceneImageUrl = sceneImage ? URL.createObjectURL(sceneImage) : null;
-  const productImageUrl = selectedProduct ? selectedProduct.imageUrl : null;
+  const activeProduct = products.find(p => p.id === activeProductId) || null;
 
-  useEffect(() => {
-    if (localStorage.getItem('homeCanvasDesign')) {
-        setSavedDesignExists(true);
-    }
-  }, []);
-
-  const handleProductImageUpload = useCallback((file: File) => {
-    // useEffect will handle cleaning up the previous blob URL
+  const handleAddProduct = useCallback(async (file: File) => {
     setError(null);
     try {
         const imageUrl = URL.createObjectURL(file);
-        const product: Product = {
+        const newProduct: Product = {
             id: Date.now(),
             name: file.name,
             imageUrl: imageUrl,
         };
-        setProductImageFile(file);
-        setSelectedProduct(product);
+        
+        setProducts(prev => [...prev, newProduct]);
+        setProductFiles(prev => new Map(prev).set(newProduct.id, file));
+        setActiveProductId(newProduct.id); // Select the new product automatically
+
+        // Asynchronously generate silhouette and update the product state
+        try {
+            const silhouetteUrl = await generateProductSilhouette(file);
+            setProducts(prevProducts => 
+                prevProducts.map(p => 
+                    p.id === newProduct.id ? { ...p, silhouetteUrl } : p
+                )
+            );
+        } catch (silhouetteError) {
+            console.warn('Could not generate product silhouette:', silhouetteError);
+            // Non-fatal, the app can continue without the silhouette.
+        }
+
     } catch(err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(`Could not load the product image. Details: ${errorMessage}`);
       console.error(err);
     }
   }, []);
+
+  // On Mount: Load saved state from localStorage
+  useEffect(() => {
+    const savedStateJSON = localStorage.getItem('homeCanvasState');
+    if (savedStateJSON) {
+        try {
+            const savedState = JSON.parse(savedStateJSON);
+            const { products: savedProducts, scene, history, activeProductId: savedActiveId } = savedState;
+
+            if (savedProducts && Array.isArray(savedProducts)) {
+                const loadedProducts: Product[] = [];
+                const loadedFiles = new Map<number, File>();
+                for (const item of savedProducts) {
+                    if (item && item.product && item.dataUrl) {
+                        const productFile = dataURLtoFile(item.dataUrl, item.product.name);
+                        // Re-create blob URL as it's not persistent across sessions
+                        item.product.imageUrl = URL.createObjectURL(productFile);
+                        loadedProducts.push(item.product);
+                        loadedFiles.set(item.product.id, productFile);
+                    }
+                }
+                setProducts(loadedProducts);
+                setProductFiles(loadedFiles);
+                if (savedActiveId && loadedProducts.some(p => p.id === savedActiveId)) {
+                    setActiveProductId(savedActiveId);
+                }
+            }
+            if (scene) {
+                const sceneFile = dataURLtoFile(scene.dataUrl, scene.name);
+                setSceneImage(sceneFile);
+            }
+            if (history && Array.isArray(history) && history.length > 0) {
+                const historyFiles = history.map((item: any) => dataURLtoFile(item.dataUrl, item.name));
+                historyRef.current = historyFiles;
+                setCanUndo(true);
+            }
+        } catch (e) {
+            console.error("Failed to load saved state:", e);
+            localStorage.removeItem('homeCanvasState');
+        }
+    }
+    isInitialLoad.current = false;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: handleAddProduct is not a dependency to avoid re-running on every render. Load should only happen once.
+
+  // On Change: Save state automatically to localStorage
+  useEffect(() => {
+    if (isInitialLoad.current || isLoading) {
+        return; // Don't save on initial load or while generating
+    }
+
+    const saveState = async () => {
+        try {
+            const productData = await Promise.all(
+                products.map(async (product) => {
+                    const file = productFiles.get(product.id);
+                    if (!file) return null;
+                    // We save the product object itself, but not the ephemeral imageUrl (blob URL)
+                    const { imageUrl, ...productToSave } = product;
+                    return {
+                        product: productToSave,
+                        dataUrl: await fileToDataURL(file),
+                    };
+                })
+            );
+
+            const scene = sceneImage ? {
+                dataUrl: await fileToDataURL(sceneImage),
+                name: sceneImage.name,
+            } : null;
+
+            const history = await Promise.all(
+                historyRef.current.map(async (file) => ({
+                    dataUrl: await fileToDataURL(file),
+                    name: file.name,
+                }))
+            );
+
+            const stateToSave = { 
+              products: productData.filter(Boolean), 
+              scene, 
+              history,
+              activeProductId 
+            };
+            localStorage.setItem('homeCanvasState', JSON.stringify(stateToSave));
+
+        } catch (e) {
+            console.error("Failed to auto-save state:", e);
+        }
+    };
+
+    // Debounce the save function to avoid rapid writes
+    const timer = setTimeout(saveState, 500);
+    return () => clearTimeout(timer);
+
+  }, [products, productFiles, sceneImage, activeProductId, isLoading, canUndo]);
+
 
   const handleInstantStart = useCallback(async () => {
     setError(null);
@@ -130,29 +239,40 @@ const App: React.FC = () => {
 
       const objectFile = new File([objectBlob], 'object.jpeg', { type: 'image/jpeg' });
       const sceneFile = new File([sceneBlob], 'scene.jpeg', { type: 'image/jpeg' });
+      
+      // Clear history and products for a fresh start
+      historyRef.current = [];
+      setCanUndo(false);
+      setProducts([]);
+      setProductFiles(new Map());
+      setActiveProductId(null);
 
       // Update state with the new files
       setSceneImage(sceneFile);
-      handleProductImageUpload(objectFile);
+      await handleAddProduct(objectFile);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(`Could not load default images. Details: ${errorMessage}`);
       console.error(err);
     }
-  }, [handleProductImageUpload]);
+  }, [handleAddProduct]);
 
   const handleProductDrop = useCallback(async (position: {x: number, y: number}, relativePosition: { xPercent: number; yPercent: number; }) => {
-    if (!productImageFile || !sceneImage || !selectedProduct) {
-      setError('An unexpected error occurred. Please try again.');
+    const currentActiveProduct = products.find(p => p.id === activeProductId);
+    const currentActiveProductFile = activeProductId ? productFiles.get(activeProductId) : null;
+
+    if (!currentActiveProductFile || !sceneImage || !currentActiveProduct) {
+      setError('Please select a product before placing it.');
       return;
     }
+    const previousScene = sceneImage; // Keep track of the scene before generation for undo
     setPersistedOrbPosition(position);
     setIsLoading(true);
     setError(null);
     try {
       const { finalImageUrl, debugImageUrl, finalPrompt } = await generateCompositeImage(
-        productImageFile, 
-        selectedProduct.name,
+        currentActiveProductFile, 
+        currentActiveProduct.name,
         sceneImage,
         sceneImage.name,
         relativePosition
@@ -161,6 +281,13 @@ const App: React.FC = () => {
       setDebugPrompt(finalPrompt);
       const newSceneFile = dataURLtoFile(finalImageUrl, `generated-scene-${Date.now()}.jpeg`);
       setSceneImage(newSceneFile);
+
+      // Add the previous state to history for the undo action
+      historyRef.current.push(previousScene);
+      if (historyRef.current.length > 10) { // Limit history size
+        historyRef.current.shift();
+      }
+      setCanUndo(true);
 
     } catch (err)
  {
@@ -171,96 +298,32 @@ const App: React.FC = () => {
       setIsLoading(false);
       setPersistedOrbPosition(null);
     }
-  }, [productImageFile, sceneImage, selectedProduct]);
+  }, [productFiles, sceneImage, products, activeProductId]);
 
 
   const handleReset = useCallback(() => {
-    // Let useEffect handle URL revocation
-    setSelectedProduct(null);
-    setProductImageFile(null);
+    setProducts([]);
+    setProductFiles(new Map());
+    setActiveProductId(null);
     setSceneImage(null);
     setError(null);
     setIsLoading(false);
     setPersistedOrbPosition(null);
     setDebugImageUrl(null);
     setDebugPrompt(null);
-    localStorage.removeItem('homeCanvasDesign');
-    setSavedDesignExists(false);
+    historyRef.current = [];
+    setCanUndo(false);
+    localStorage.removeItem('homeCanvasState');
   }, []);
+  
+  const handleUndo = useCallback(() => {
+    if (historyRef.current.length === 0) return;
 
-  const handleSaveDesign = async () => {
-    if (!productImageFile || !sceneImage) {
-        setError('A product and scene must be present to save.');
-        return;
+    const previousScene = historyRef.current.pop();
+    if (previousScene) {
+        setSceneImage(previousScene);
     }
-    setSaveStatus('saving');
-    try {
-        const productDataUrl = await fileToDataURL(productImageFile);
-        const sceneDataUrl = await fileToDataURL(sceneImage);
-
-        const design = {
-            product: {
-                dataUrl: productDataUrl,
-                name: productImageFile.name,
-            },
-            scene: {
-                dataUrl: sceneDataUrl,
-                name: sceneImage.name,
-            },
-        };
-
-        localStorage.setItem('homeCanvasDesign', JSON.stringify(design));
-        setSavedDesignExists(true);
-        setSaveStatus('saved');
-        setTimeout(() => setSaveStatus('idle'), 2000); // Reset status after 2 seconds
-    } catch (error) {
-        console.error('Failed to save design:', error);
-        setError('Failed to save the design.');
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus('idle'), 3000);
-    }
-  };
-
-  const handleLoadDesign = () => {
-    const savedDesignJSON = localStorage.getItem('homeCanvasDesign');
-    if (savedDesignJSON) {
-        try {
-            const savedDesign = JSON.parse(savedDesignJSON);
-            const { product, scene } = savedDesign;
-            
-            // Reset any intermediate state
-            setError(null);
-            setIsLoading(false);
-            setPersistedOrbPosition(null);
-            setDebugImageUrl(null);
-            setDebugPrompt(null);
-
-            // Restore product
-            const newProductFile = dataURLtoFile(product.dataUrl, product.name);
-            handleProductImageUpload(newProductFile);
-
-            // Restore scene
-            const newSceneFile = dataURLtoFile(scene.dataUrl, scene.name);
-            setSceneImage(newSceneFile);
-
-        } catch (error) {
-            console.error('Failed to load design:', error);
-            setError('Could not load the saved design. It might be corrupted.');
-            localStorage.removeItem('homeCanvasDesign');
-            setSavedDesignExists(false);
-        }
-    } else {
-        setError('No saved design found.');
-    }
-  };
-
-  const handleChangeProduct = useCallback(() => {
-    // Let useEffect handle URL revocation
-    setSelectedProduct(null);
-    setProductImageFile(null);
-    setPersistedOrbPosition(null);
-    setDebugImageUrl(null);
-    setDebugPrompt(null);
+    setCanUndo(historyRef.current.length > 0);
   }, []);
   
   const handleChangeScene = useCallback(() => {
@@ -268,6 +331,9 @@ const App: React.FC = () => {
     setPersistedOrbPosition(null);
     setDebugImageUrl(null);
     setDebugPrompt(null);
+    // Changing the scene resets the history
+    historyRef.current = [];
+    setCanUndo(false);
   }, []);
 
   useEffect(() => {
@@ -278,13 +344,15 @@ const App: React.FC = () => {
   }, [sceneImageUrl]);
   
   useEffect(() => {
-    // Clean up the product's object URL when the component unmounts or the URL changes
+    // Clean up all product object URLs on change or unmount
     return () => {
-        if (productImageUrl && productImageUrl.startsWith('blob:')) {
-            URL.revokeObjectURL(productImageUrl);
-        }
+        products.forEach(product => {
+            if (product.imageUrl && product.imageUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(product.imageUrl);
+            }
+        });
     };
-  }, [productImageUrl]);
+  }, [products]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -300,12 +368,29 @@ const App: React.FC = () => {
   }, [isLoading]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (!selectedProduct) return;
+    if (!activeProduct) return;
     // Prevent page scroll
     e.preventDefault();
     setIsTouchDragging(true);
     const touch = e.touches[0];
     setTouchGhostPosition({ x: touch.clientX, y: touch.clientY });
+  };
+  
+  const handleDragStart = (e: React.DragEvent) => {
+      if (!activeProduct) return;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
+  }
+
+  const handleNewProductFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+        handleAddProduct(file);
+    }
+    // Reset the input value to allow uploading the same file again
+    if (addProductInputRef.current) {
+        addProductInputRef.current.value = "";
+    }
   };
 
   useEffect(() => {
@@ -404,7 +489,7 @@ const App: React.FC = () => {
         );
     }
     
-    if (!productImageFile || !sceneImage) {
+    if (products.length === 0 || !sceneImage) {
       return (
         <div className="w-full max-w-6xl mx-auto animate-fade-in">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
@@ -412,8 +497,8 @@ const App: React.FC = () => {
               <h2 className="text-2xl font-extrabold text-center mb-5 text-zinc-800">Upload Product</h2>
               <ImageUploader 
                 id="product-uploader"
-                onFileSelect={handleProductImageUpload}
-                imageUrl={productImageUrl}
+                onFileSelect={handleAddProduct}
+                imageUrl={products.length > 0 ? products[products.length - 1].imageUrl : null}
               />
             </div>
             <div className="flex flex-col">
@@ -449,29 +534,38 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
           {/* Product Column */}
           <div className="md:col-span-1 flex flex-col">
-            <h2 className="text-2xl font-extrabold text-center mb-5 text-zinc-800">Product</h2>
-            <div className="flex-grow flex items-center justify-center">
-              <div 
-                  draggable="true" 
-                  onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
-                  }}
-                  onTouchStart={handleTouchStart}
-                  className="cursor-move w-full max-w-xs"
-              >
-                  <ObjectCard product={selectedProduct!} isSelected={true} />
-              </div>
+            <h2 className="text-2xl font-extrabold text-center mb-5 text-zinc-800">Products</h2>
+            <div className="flex-grow overflow-y-auto space-y-4 p-2 border border-zinc-200 rounded-lg bg-zinc-50/50 min-h-[40vh] md:min-h-0">
+                {products.map(product => (
+                    <div 
+                        key={product.id}
+                        draggable={product.id === activeProductId}
+                        onDragStart={handleDragStart}
+                        onTouchStart={handleTouchStart}
+                        className={product.id === activeProductId ? 'cursor-move' : ''}
+                    >
+                        <ObjectCard 
+                            product={product} 
+                            isSelected={product.id === activeProductId} 
+                            onClick={() => setActiveProductId(product.id)}
+                        />
+                    </div>
+                ))}
             </div>
             <div className="text-center mt-4">
-               <div className="h-5 flex items-center justify-center">
+                <input
+                    type="file"
+                    ref={addProductInputRef}
+                    onChange={handleNewProductFileChange}
+                    accept="image/png, image/jpeg"
+                    className="hidden"
+                />
                 <button
-                    onClick={handleChangeProduct}
-                    className="text-sm text-blue-600 hover:text-blue-800 font-semibold"
+                    onClick={() => addProductInputRef.current?.click()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg text-sm transition-colors shadow-sm"
                 >
-                    Change Product
+                    + Add Product
                 </button>
-               </div>
             </div>
           </div>
           {/* Scene Column */}
@@ -481,15 +575,16 @@ const App: React.FC = () => {
               <ImageUploader 
                   ref={sceneImgRef}
                   id="scene-uploader" 
-                  onFileSelect={setSceneImage} 
+                  onFileSelect={handleChangeScene} 
                   imageUrl={sceneImageUrl}
-                  isDropZone={!!sceneImage && !isLoading}
+                  isDropZone={!!sceneImage && !isLoading && activeProductId !== null}
                   onProductDrop={handleProductDrop}
                   persistedOrbPosition={persistedOrbPosition}
                   showDebugButton={!!debugImageUrl && !isLoading}
                   onDebugClick={() => setIsDebugModalOpen(true)}
                   isTouchHovering={isHoveringDropZone}
                   touchOrbPosition={touchOrbPosition}
+                  productSilhouetteUrl={activeProduct?.silhouetteUrl}
               />
             </div>
             <div className="text-center mt-4">
@@ -514,7 +609,10 @@ const App: React.FC = () => {
              </div>
            ) : (
              <p className="text-zinc-500 animate-fade-in">
-                Drag the product onto a location in the scene, or simply click where you want it.
+                {activeProductId === null 
+                    ? "Select a product from the list to place it on the scene."
+                    : "Drag the selected product onto the scene, or click to place it."
+                }
              </p>
            )}
         </div>
@@ -525,7 +623,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-white text-zinc-800 flex items-center justify-center p-4 md:p-8">
       <TouchGhost 
-        imageUrl={isTouchDragging ? productImageUrl : null} 
+        imageUrl={isTouchDragging ? activeProduct?.imageUrl ?? null : null} 
         position={touchGhostPosition}
       />
       <div className="flex flex-col items-center gap-8 w-full">
@@ -534,18 +632,11 @@ const App: React.FC = () => {
         {/* Action Controls */}
         <div className="w-full max-w-lg mx-auto flex items-center justify-center gap-3 p-2 bg-zinc-100 rounded-xl">
             <button
-                onClick={handleSaveDesign}
-                disabled={!productImageFile || !sceneImage || isLoading || saveStatus === 'saving'}
+                onClick={handleUndo}
+                disabled={!canUndo || isLoading}
                 className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
             >
-                {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? 'Save Failed' : 'Save Design'}
-            </button>
-            <button
-                onClick={handleLoadDesign}
-                disabled={!savedDesignExists || isLoading}
-                className="flex-1 bg-white hover:bg-zinc-50 text-zinc-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-zinc-200 shadow-sm disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
-            >
-                Load Design
+                Undo
             </button>
             <button
                 onClick={handleReset}
