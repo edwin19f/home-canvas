@@ -55,23 +55,6 @@ body {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
 }
-
-.product-silhouette-ghost {
-    position: absolute;
-    width: 120px;
-    height: 120px;
-    object-fit: contain;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    z-index: 10;
-    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.2));
-    transition: opacity 0.2s ease-out;
-    opacity: 0; /* Hidden by default */
-}
-
-.is-dragging-over .product-silhouette-ghost {
-    opacity: 0.7; /* Visible on drag over */
-}
 </style>
 <link rel="stylesheet" href="/index.css">
 </head>

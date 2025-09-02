@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { generateCompositeImage, generateProductSilhouette, generateInteriorDesign, modifySurface } from './services/geminiService';
+import { generateCompositeImage, generateInteriorDesign, modifySurface } from './services/geminiService';
 import { Product } from './types';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -116,20 +116,6 @@ const App: React.FC = () => {
         setProducts(prev => [...prev, newProduct]);
         setProductFiles(prev => new Map(prev).set(newProduct.id, file));
         setActiveProductId(newProduct.id); // Select the new product automatically
-
-        // Asynchronously generate silhouette and update the product state
-        try {
-            const silhouetteUrl = await generateProductSilhouette(file);
-            setProducts(prevProducts => 
-                prevProducts.map(p => 
-                    p.id === newProduct.id ? { ...p, silhouetteUrl } : p
-                )
-            );
-        } catch (silhouetteError) {
-            console.warn('Could not generate product silhouette:', silhouetteError);
-            // Non-fatal, the app can continue without the silhouette.
-        }
-
     } catch(err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(`Could not load the product image. Details: ${errorMessage}`);
@@ -768,7 +754,7 @@ const App: React.FC = () => {
                   onDebugClick={() => setIsDebugModalOpen(true)}
                   isTouchHovering={isHoveringDropZone}
                   touchOrbPosition={touchOrbPosition}
-                  productSilhouetteUrl={activeProduct?.silhouetteUrl}
+                  isPlacementActive={!!activeProduct}
               />
             </div>
             <div className="mt-4">

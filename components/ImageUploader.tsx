@@ -17,7 +17,7 @@ interface ImageUploaderProps {
   onDebugClick?: () => void;
   isTouchHovering?: boolean;
   touchOrbPosition?: { x: number; y: number } | null;
-  productSilhouetteUrl?: string | null;
+  isPlacementActive?: boolean;
 }
 
 const UploadIcon: React.FC = () => (
@@ -33,7 +33,7 @@ const WarningIcon: React.FC = () => (
 );
 
 
-const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, label, onFileSelect, imageUrl, isDropZone = false, onPlacementRequest, persistedOrbPosition, showDebugButton, onDebugClick, isTouchHovering = false, touchOrbPosition = null, productSilhouetteUrl }, ref) => {
+const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, label, onFileSelect, imageUrl, isDropZone = false, onPlacementRequest, persistedOrbPosition, showDebugButton, onDebugClick, isTouchHovering = false, touchOrbPosition = null, isPlacementActive = false }, ref) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -149,7 +149,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (isDropZone && onPlacementRequest) {
-      // If it's a drop zone, a click should place the product.
+      // If it's a drop zone, a click should trigger the placement request (which opens the context menu).
       handlePlacement(event.clientX, event.clientY, event.currentTarget);
     }
   };
@@ -178,7 +178,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       setOrbPosition(null);
       setUrlError(null);
 
-      if (isDropZone && onPlacementRequest && productSilhouetteUrl) {
+      if (isDropZone && onPlacementRequest && isPlacementActive) {
           // Case 1: A product is being dropped onto the scene
           handlePlacement(event.clientX, event.clientY, event.currentTarget);
       } else {
@@ -194,7 +194,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
               onFileSelect(file);
           }
       }
-  }, [isDropZone, onPlacementRequest, onFileSelect, handlePlacement, productSilhouetteUrl]);
+  }, [isDropZone, onPlacementRequest, onFileSelect, handlePlacement, isPlacementActive]);
   
   const showHoverState = isDraggingOver || isTouchHovering;
   const currentOrbPosition = orbPosition || touchOrbPosition;
@@ -202,9 +202,9 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
 
   const uploaderClasses = `w-full aspect-video bg-zinc-100 border-2 border-dashed rounded-lg flex items-center justify-center transition-all duration-300 relative overflow-hidden ${
       showHoverState ? 'border-blue-500 bg-blue-50 is-dragging-over'
-    : isDropZone ? 'border-zinc-400 cursor-crosshair'
+    : isDropZone ? 'border-zinc-400'
     : 'border-zinc-300'
-  } ${!isActionable ? 'cursor-default' : isDropZone ? (productSilhouetteUrl ? 'cursor-crosshair' : 'cursor-context-menu') : 'hover:border-blue-500'}`;
+  } ${!isActionable ? 'cursor-default' : isDropZone ? (isPlacementActive ? 'cursor-crosshair' : 'cursor-context-menu') : 'cursor-pointer hover:border-blue-500'}`;
 
   const uploaderContent = (
     <div className="text-center text-zinc-500 p-4 flex flex-col h-full w-full justify-center">
@@ -260,7 +260,7 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
       {label && <h3 className="text-xl font-semibold mb-4 text-zinc-700">{label}</h3>}
       <div
         className={uploaderClasses}
-        onClick={imageUrl && isActionable && productSilhouetteUrl ? handleClick : undefined}
+        onClick={isDropZone ? handleClick : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -283,51 +283,25 @@ const ImageUploader = forwardRef<HTMLImageElement, ImageUploaderProps>(({ id, la
               className="w-full h-full object-contain" 
             />
             
-            {productSilhouetteUrl ? (
-                <img
-                    src={productSilhouetteUrl}
-                    alt="Product silhouette"
-                    className="product-silhouette-ghost"
-                    style={{
-                        left: currentOrbPosition ? currentOrbPosition.x : -9999,
-                        top: currentOrbPosition ? currentOrbPosition.y : -9999,
-                    }}
-                />
-            ) : (
+            <div 
+                className="drop-orb" 
+                style={{ 
+                    left: currentOrbPosition ? currentOrbPosition.x : -9999, 
+                    top: currentOrbPosition ? currentOrbPosition.y : -9999 
+                }}
+            ></div>
+
+            {persistedOrbPosition && (
                 <div 
                     className="drop-orb" 
                     style={{ 
-                        left: currentOrbPosition ? currentOrbPosition.x : -9999, 
-                        top: currentOrbPosition ? currentOrbPosition.y : -9999 
+                        left: persistedOrbPosition.x, 
+                        top: persistedOrbPosition.y,
+                        opacity: 1,
+                        transform: 'translate(-50%, -50%) scale(1)',
+                        transition: 'none', // Appear instantly without animation
                     }}
                 ></div>
-            )}
-
-            {persistedOrbPosition && (
-                productSilhouetteUrl ? (
-                    <img
-                        src={productSilhouetteUrl}
-                        alt="Placed product silhouette"
-                        className="product-silhouette-ghost"
-                        style={{
-                            left: persistedOrbPosition.x,
-                            top: persistedOrbPosition.y,
-                            opacity: 0.7,
-                            transition: 'none',
-                        }}
-                    />
-                ) : (
-                    <div 
-                        className="drop-orb" 
-                        style={{ 
-                            left: persistedOrbPosition.x, 
-                            top: persistedOrbPosition.y,
-                            opacity: 1,
-                            transform: 'translate(-50%, -50%) scale(1)',
-                            transition: 'none', // Appear instantly without animation
-                        }}
-                    ></div>
-                )
             )}
 
             {showDebugButton && onDebugClick && (

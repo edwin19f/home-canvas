@@ -396,52 +396,6 @@ The output should ONLY be the final, composed image. Do not add any text or expl
 };
 
 /**
- * Generates a black silhouette with a transparent background for a given product image.
- * @param productImage The file for the product.
- * @returns A promise that resolves to the base64 data URL of the silhouette image.
- */
-export const generateProductSilhouette = async (
-    productImage: File
-): Promise<string> => {
-    console.log('Generating product silhouette...');
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-
-    // A smaller size is sufficient and faster for generating a silhouette.
-    const resizedImage = await resizeImage(productImage, 512); 
-    const imagePart = await fileToPart(resizedImage);
-
-    const prompt = `
-Analyze the provided image of a product. Your task is to create a solid black silhouette of the main product in the image.
-
-**Instructions:**
-1.  Identify the main product.
-2.  Create a silhouette of its shape. The silhouette must be solid black (#000000).
-3.  The background of the output image must be transparent.
-4.  The output image should be a PNG file format to support transparency.
-5.  The image should be tightly cropped around the silhouette.
-
-Do not include any text, watermarks, or other elements in the output. The output should ONLY be the silhouette image.
-`;
-    const textPart = { text: prompt };
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: { parts: [imagePart, textPart] },
-    });
-
-    const imagePartFromResponse = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-
-    if (imagePartFromResponse?.inlineData) {
-        const { mimeType, data } = imagePartFromResponse.inlineData;
-        console.log('Successfully generated silhouette.');
-        return `data:${mimeType};base64,${data}`;
-    }
-
-    console.error("Silhouette generation response did not contain an image part.", response);
-    throw new Error("The AI model did not return a silhouette image.");
-};
-
-/**
  * Generates a new interior design for a room based on an image and a text prompt.
  * @param roomImage The file for the room to be redesigned.
  * @param designPrompt A text description of the desired changes.
