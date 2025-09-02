@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { generateCompositeImage, generateInteriorDesign, modifySurface } from './services/geminiService';
+import { generateCompositeImage, generateInteriorDesign, modifySurface, generateNewViewpoint } from './services/geminiService';
 import { Product } from './types';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -443,6 +443,42 @@ const App: React.FC = () => {
             setIsLoading(false);
         }
     }, [surfaceModificationState, sceneImage]);
+    
+    const handleViewpointChange = useCallback(async (viewpoint: 'eye-level' | 'high-angle' | 'birds-eye') => {
+        if (!sceneImage) {
+            setError('Please provide a scene image first.');
+            return;
+        }
+
+        const previousScene = sceneImage; // For undo
+        setIsLoading(true);
+        setError(null);
+        setPersistedOrbPosition(null); // Clear any placement markers
+
+        try {
+            const generatedImageUrl = await generateNewViewpoint(sceneImage, viewpoint);
+            const newSceneFile = dataURLtoFile(generatedImageUrl, `viewpoint-scene-${Date.now()}.jpeg`);
+            setSceneImage(newSceneFile);
+
+            // Add the previous state to history for the undo action
+            undoHistoryRef.current.push(previousScene);
+            if (undoHistoryRef.current.length > 10) { // Limit history size
+                undoHistoryRef.current.shift();
+            }
+            // Any new action clears the redo history
+            redoHistoryRef.current = [];
+            setCanUndo(true);
+            setCanRedo(false);
+
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(`Failed to change viewpoint. ${errorMessage}`);
+            console.error(err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [sceneImage]);
+
 
   const handleReset = useCallback(() => {
     setProducts([]);
@@ -757,11 +793,13 @@ const App: React.FC = () => {
                   isPlacementActive={!!activeProduct}
               />
             </div>
-            <div className="mt-4">
+            <div className="mt-4 space-y-4">
                 {sceneImage && !isLoading && (
+                  <>
+                    {/* Redesign Scene Controls */}
                     <div className="w-full mx-auto p-4 border border-zinc-200 rounded-lg bg-zinc-50/50 animate-fade-in">
                         <label htmlFor="scene-design-prompt" className="block text-md font-bold text-zinc-800 mb-2 text-left">
-                            Or, Redesign the Entire Scene
+                            Redesign the Entire Scene
                         </label>
                         <textarea
                             id="scene-design-prompt"
@@ -789,6 +827,36 @@ const App: React.FC = () => {
                             </button>
                         </div>
                     </div>
+                    {/* Change Viewpoint Controls */}
+                    <div className="w-full mx-auto p-4 border border-zinc-200 rounded-lg bg-zinc-50/50 animate-fade-in">
+                        <label className="block text-md font-bold text-zinc-800 mb-2 text-left">
+                            Change Viewpoint
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <button
+                                onClick={() => handleViewpointChange('eye-level')}
+                                disabled={isLoading}
+                                className="bg-white hover:bg-zinc-100 text-zinc-800 font-semibold py-2 px-4 rounded-lg transition-colors border border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+                            >
+                                Eye-Level
+                            </button>
+                            <button
+                                onClick={() => handleViewpointChange('high-angle')}
+                                disabled={isLoading}
+                                className="bg-white hover:bg-zinc-100 text-zinc-800 font-semibold py-2 px-4 rounded-lg transition-colors border border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+                            >
+                                High-Angle
+                            </button>
+                            <button
+                                onClick={() => handleViewpointChange('birds-eye')}
+                                disabled={isLoading}
+                                className="bg-white hover:bg-zinc-100 text-zinc-800 font-semibold py-2 px-4 rounded-lg transition-colors border border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+                            >
+                                Bird's-Eye
+                            </button>
+                        </div>
+                    </div>
+                  </>
                 )}
             </div>
           </div>
